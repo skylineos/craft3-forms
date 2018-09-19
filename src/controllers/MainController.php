@@ -17,6 +17,7 @@ use plugins\dolphiq\form\Plugin;
 use Yii;
 use yii\helpers\FileHelper;
 use yii\mail\MessageInterface;
+use plugins\dolphiq\form\events\EmailEvent as Event;
 
 class MainController extends \craft\web\Controller
 {
@@ -33,6 +34,12 @@ class MainController extends \craft\web\Controller
      * The general thank you file, also named thanks.php, will reside in de main forms directory (The FORM_PATH)
      */
     CONST FORM_MAIL_LAYOUT = '@vendor/dolphiq/craft3-forms/src/mail/layouts/html';
+
+
+    CONST EVENT_BEFORE_SEND_OWNER_MAIL = 'before_send_owner_mail';
+
+
+    CONST EVENT_BEFORE_SEND_CUSTOMER_MAIL = 'before_send_customer_mail';
 
 
     /**
@@ -86,25 +93,49 @@ class MainController extends \craft\web\Controller
 
                     // Create owner mail
                     if(!is_null($mail_owner)) {
+                        $event = new Event();
+                        $event->form = $handle;
+                        $event->model = $form;
+                        $event->subject = $form->getSettings()->mail_subject_owner;
+                        $event->to = $form->getSettings()->mail_to;
+                        $this->trigger(self::EVENT_BEFORE_SEND_OWNER_MAIL, $event);
+
                         $ownerMail = $mailer->compose($mail_owner, ['model' => $form, 'params' => $params])
-                            ->setSubject($form->getSettings()->mail_subject_owner)
-                            ->setTo($form->getSettings()->mail_to);
+                        ->setSubject($event->subject)
+                        ->setReplyTo($event->replyTo)
+                        ->setTo($event->to);
 
                         // Save owner mail
                         $this->saveInDb($form, $ownerMail);
+                        
+                        if($event->sendEmail) {
+                            // Send owner mail
+                            $ownerMail->send();
+                        }
 
-                        // Send owner mail
-                        $ownerMail->send();
                     }else{
                         $this->saveInDb($form);
                     }
 
+
+
                     // Send customer mail
                     if(!is_null($mail_customer) && isset($form->email) && !empty($form->email)){
-                        $mailer->compose($mail_customer, ['model' => $form, 'params' => $params])
-                            ->setSubject($form->getSettings()->mail_subject_customer)
-                            ->setTo($form->email)
-                            ->send();
+                        $event = new Event();
+                        $event->form = $handle;
+                        $event->model = $form;
+                        $event->subject =$form->getSettings()->mail_subject_customer;
+                        $event->to = $form->email;
+                        $this->trigger(self::EVENT_BEFORE_SEND_CUSTOMER_MAIL, $event);
+
+                        $customerMail = $mailer->compose($mail_customer, ['model' => $form, 'params' => $params])
+                            ->setSubject($event->subject)
+                            ->setReplyTo($event->replyTo)
+                            ->setTo($event->to);
+
+                            if($event->sendEmail) {
+                                $customerMail->send();
+                            }
                     }
 
                 }else{
