@@ -97,7 +97,7 @@ class MainController extends \craft\web\Controller
                         $event->form = $handle;
                         $event->model = $form;
                         $event->subject = $form->getSettings()->mail_subject_owner;
-                        $event->to = $form->getSettings()->mail_to;
+                        $event->to = Craft::parseEnv($form->getSettings()->mail_to);
                         $this->trigger(self::EVENT_BEFORE_SEND_OWNER_MAIL, $event);
 
                         $ownerMail = $mailer->compose($mail_owner, ['model' => $form, 'params' => $params])
