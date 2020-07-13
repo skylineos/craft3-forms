@@ -18,6 +18,7 @@ use Yii;
 use yii\helpers\FileHelper;
 use yii\mail\MessageInterface;
 use plugins\dolphiq\form\events\EmailEvent as Event;
+use mattwest\craftrecaptcha\CraftRecaptcha;
 
 class MainController extends \craft\web\Controller
 {
@@ -45,7 +46,7 @@ class MainController extends \craft\web\Controller
     /**
      * @inheritdoc
      */
-    protected $allowAnonymous = true;
+    protected $allowAnonymous = self::ALLOW_ANONYMOUS_LIVE;
 
     /**
      * The loaded forms
@@ -75,86 +76,102 @@ class MainController extends \craft\web\Controller
         $form = $this->getForm($handle);
 
         if($form && $form->getSettings()->enabled) {
-
+  
             $view = $form->getView();
             $mail_owner = $form->getMailOwner();
             $mail_customer = $form->getMailCustomer();
-
+  
             $params = is_array($params) ? $params : json_decode($params, true);
-
+  
             if ($form->load(Craft::$app->request->post()) && $form->validate()) {
 
-                /** Validated succesfull. **/
+                /** GOOGLE RECAPTCHA V2 Validation https://github.com/matt-west/craft-recaptcha/blob/master/README.md **/
 
-                // Send mail and return thank you page
-                if(!is_null($mail_owner) || !is_null($mail_customer)) {
-                    $mailer = Yii::$app->mailer;
-                    $mailer->htmlLayout = self::FORM_MAIL_LAYOUT;
+                // Get the reCAPTCHA response code to validate.
+                $captcha = Craft::$app->getRequest()->getParam('g-recaptcha-response');
+                // Pass the response code to the verification service.
+                $validates = CraftRecaptcha::$plugin->craftRecaptchaService->verify($captcha);
+                
+                if ($validates) {
+                  /** Validated succesfull. **/
+  
+                  // Send mail and return thank you page
+                  if(!is_null($mail_owner) || !is_null($mail_customer)) {
+                      $mailer = Yii::$app->mailer;
+                      $mailer->htmlLayout = self::FORM_MAIL_LAYOUT;
+    
+                      // Create owner mail
+                      if(!is_null($mail_owner)) {
+                          $event = new Event();
+                          $event->form = $handle;
+                          $event->model = $form;
+                          $event->subject = $form->getSettings()->mail_subject_owner;
+                          $event->to = Craft::parseEnv($form->getSettings()->mail_to);
+                          $this->trigger(self::EVENT_BEFORE_SEND_OWNER_MAIL, $event);
+    
+                          $ownerMail = $mailer->compose($mail_owner, ['model' => $form, 'params' => $params])
+                          ->setSubject($event->subject)
+                          ->setReplyTo($event->replyTo)
+                          ->setTo($event->to);
+    
+                          // Save owner mail
+                          $this->saveInDb($form, $ownerMail);
+                          
+                          if($event->sendEmail) {
+                              // Send owner mail
+                              $ownerMail->send();
+                          }
+    
+                      }else{
+                          $this->saveInDb($form);
+                      }
+    
+    
+    
+                      // Send customer mail
+                      if(!is_null($mail_customer) && isset($form->email) && !empty($form->email)){
+                          $event = new Event();
+                          $event->form = $handle;
+                          $event->model = $form;
+                          $event->subject =$form->getSettings()->mail_subject_customer;
+                          $event->to = $form->email;
+                          $this->trigger(self::EVENT_BEFORE_SEND_CUSTOMER_MAIL, $event);
+    
+                          $customerMail = $mailer->compose($mail_customer, ['model' => $form, 'params' => $params])
+                              ->setSubject($event->subject)
+                              ->setReplyTo($event->replyTo)
+                              ->setTo($event->to);
+    
+                              if($event->sendEmail) {
+                                  $customerMail->send();
+                              }
+                      }
+    
+                  }else{
+                      //No mail, just save in db
+                      $this->saveInDb($form);
+                  }
+    
+                  // Render thank you part
+                  if(!is_null($form['thanx'])){
+                      return $this->renderAjax($form['thanx'], ['model' => $form, 'params' => $params, 'handle' => $handle]);
+                  }else{
+                      return $this->renderAjax(self::FORM_THANX_VIEW, ['model' => $form, 'params' => $params, 'handle' => $handle] );
+                  }
 
-                    // Create owner mail
-                    if(!is_null($mail_owner)) {
-                        $event = new Event();
-                        $event->form = $handle;
-                        $event->model = $form;
-                        $event->subject = $form->getSettings()->mail_subject_owner;
-                        $event->to = $form->getSettings()->mail_to;
-                        $this->trigger(self::EVENT_BEFORE_SEND_OWNER_MAIL, $event);
-
-                        $ownerMail = $mailer->compose($mail_owner, ['model' => $form, 'params' => $params])
-                        ->setSubject($event->subject)
-                        ->setReplyTo($event->replyTo)
-                        ->setTo($event->to);
-
-                        // Save owner mail
-                        $this->saveInDb($form, $ownerMail);
-                        
-                        if($event->sendEmail) {
-                            // Send owner mail
-                            $ownerMail->send();
-                        }
-
-                    }else{
-                        $this->saveInDb($form);
-                    }
-
-
-
-                    // Send customer mail
-                    if(!is_null($mail_customer) && isset($form->email) && !empty($form->email)){
-                        $event = new Event();
-                        $event->form = $handle;
-                        $event->model = $form;
-                        $event->subject =$form->getSettings()->mail_subject_customer;
-                        $event->to = $form->email;
-                        $this->trigger(self::EVENT_BEFORE_SEND_CUSTOMER_MAIL, $event);
-
-                        $customerMail = $mailer->compose($mail_customer, ['model' => $form, 'params' => $params])
-                            ->setSubject($event->subject)
-                            ->setReplyTo($event->replyTo)
-                            ->setTo($event->to);
-
-                            if($event->sendEmail) {
-                                $customerMail->send();
-                            }
-                    }
-
-                }else{
-                    //No mail, just save in db
-                    $this->saveInDb($form);
+                } else {
+                  Craft::$app->getSession()->setError('Unable to verify your submission.');
+                  return null;
                 }
-
-                // Render thank you part
-                if(!is_null($form['thanx'])){
-                    return $this->renderAjax($form['thanx'], ['model' => $form, 'params' => $params, 'handle' => $handle]);
-                }else{
-                    return $this->renderAjax(self::FORM_THANX_VIEW, ['model' => $form, 'params' => $params, 'handle' => $handle] );
-                }
+  
+               
             }
-
+  
             return $this->renderAjax($view, ['model' => $form, 'params' => $params, 'handle' => $handle]);
         }
-
+  
         return null;
+
     }
 
     /**
