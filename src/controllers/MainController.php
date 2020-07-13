@@ -85,6 +85,8 @@ class MainController extends \craft\web\Controller
   
             if ($form->load(Craft::$app->request->post()) && $form->validate()) {
 
+                /** GOOGLE RECAPTCHA V2 Validation https://github.com/matt-west/craft-recaptcha/blob/master/README.md **/
+
                 // Get the reCAPTCHA response code to validate.
                 $captcha = Craft::$app->getRequest()->getParam('g-recaptcha-response');
                 // Pass the response code to the verification service.
